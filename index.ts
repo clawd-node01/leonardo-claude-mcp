@@ -55,6 +55,46 @@ function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
 
+//─────────────────────────────────────────────────────────────────────────────
+// Auth Middleware (HTTP transport only)
+//─────────────────────────────────────────────────────────────────────────────
+
+/**
+* Protects /mcp with a static Bearer token when MCP_AUTH_TOKEN is set
+* - Missing / wrong token -> 401
+* - MCP_AUTH_TOKEN unset -> auth is skipped (dev / stdio style convenience)
+* - Generate token with command -> openssl rand -hex 32
+*
+* Client config example:
+* {
+*   "mcpServers": {
+*     "leonardo": {
+*        "url": "https://ur-host/mcp",
+*        "headers": { "Authorization": "Bearer <MCP_AUTH_TOKEN>" } 
+*      }
+*    }
+* }
+*
+**/
+
+function mcpAuthMiddleware(req: Request, res: Response, next: NextFunction): void {
+  if (!MCP_AUTH_TOKEN) {
+    next();
+    return;
+  }
+
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith("Bearer ")) {
+    res.status(401).json({
+      error: "Unauthorized",
+      message: "Invalid token",
+    });
+    return;
+  }
+  next();
+}
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -598,6 +638,7 @@ Returns: { deleted: true } on success.`,
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function runHTTP(): Promise<void> {
+  
   const app = express();
   app.use(express.json());
 
@@ -605,7 +646,7 @@ async function runHTTP(): Promise<void> {
     res.json({ status: "ok", service: "leonardo-mcp-server", tools: 9 });
   });
 
-  app.post("/mcp", async (req, res) => {
+  app.post("/mcp", mcpAuthMiddleware, async (req, res) => {
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
@@ -619,6 +660,12 @@ async function runHTTP(): Promise<void> {
   app.listen(port, () => {
     console.error(`Leonardo MCP server listening on http://localhost:${port}/mcp`);
     console.error(`Health: http://localhost:${port}/health`);
+
+    if (MCP_AUTH_TOKEN) {
+      console.error("MCP Auth: enabled (MCP_AUTH_TOKEN is set)");
+    } else {
+      console.error("MCP Auth: disabled (set MCP_AUTH_TOKEN to require Bearer auth)");
+    }
   });
 }
 
